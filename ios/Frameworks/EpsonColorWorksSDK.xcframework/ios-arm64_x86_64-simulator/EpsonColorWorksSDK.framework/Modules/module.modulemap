@@ -1,0 +1,6 @@
+framework module EpsonColorWorksSDK {
+  umbrella header "EpsonColorWorksSDK.h"
+  export *
+
+  module * { export * }
+}
