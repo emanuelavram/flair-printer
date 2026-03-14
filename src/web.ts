@@ -22,7 +22,7 @@ export class FlairPrinterWeb extends WebPlugin implements FlairPrinterPlugin {
     throw this.unavailable('testPrint is not available on web.');
   }
 
-  async printReceipt(_: { printerId: string; data: number[] }): Promise<PrinterResult> {
+  async printReceipt(_: any): Promise<PrinterResult> {
     throw this.unavailable('printReceipt is not available on web.');
   }
 }

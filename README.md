@@ -17,7 +17,6 @@ npx cap sync
 * [`scanUsbPrinters()`](#scanusbprinters)
 * [`setPrinter(...)`](#setprinter)
 * [`removePrinter(...)`](#removeprinter)
-* [`testPrint(...)`](#testprint)
 * [`printReceipt(...)`](#printreceipt)
 * [Interfaces](#interfaces)
 * [Type Aliases](#type-aliases)
@@ -79,30 +78,15 @@ removePrinter({ printerId }: { printerId: string; }) => Promise<PrinterResult>
 --------------------
 
 
-### testPrint(...)
-
-```typescript
-testPrint({ printerId }: { printerId: string; }) => Promise<PrinterResult>
-```
-
-| Param     | Type                                |
-| --------- | ----------------------------------- |
-| **`__0`** | <code>{ printerId: string; }</code> |
-
-**Returns:** <code>Promise&lt;<a href="#printerresult">PrinterResult</a>&gt;</code>
-
---------------------
-
-
 ### printReceipt(...)
 
 ```typescript
-printReceipt({ printerId, data }: { printerId: string; data: number[]; }) => Promise<PrinterResult>
+printReceipt({ printerId, data, }: { printerId: string; data: { raw: number[]; logo?: string; }; }) => Promise<PrinterResult>
 ```
 
-| Param     | Type                                                |
-| --------- | --------------------------------------------------- |
-| **`__0`** | <code>{ printerId: string; data: number[]; }</code> |
+| Param     | Type                                                                         |
+| --------- | ---------------------------------------------------------------------------- |
+| **`__0`** | <code>{ printerId: string; data: { raw: number[]; logo?: string; }; }</code> |
 
 **Returns:** <code>Promise&lt;<a href="#printerresult">PrinterResult</a>&gt;</code>
 

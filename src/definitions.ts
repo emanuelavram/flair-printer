@@ -29,6 +29,11 @@ export interface FlairPrinterPlugin {
   scanUsbPrinters(): Promise<{ printers: USBPrinter[] }>;
   setPrinter({ printer }: { printer: Printer }): Promise<PrinterResult>;
   removePrinter({ printerId }: { printerId: string }): Promise<PrinterResult>;
-  testPrint({ printerId }: { printerId: string }): Promise<PrinterResult>;
-  printReceipt({ printerId, data }: { printerId: string; data: number[] }): Promise<PrinterResult>;
+  printReceipt({
+    printerId,
+    data,
+  }: {
+    printerId: string;
+    data: { raw: number[]; logo?: string } /* Receipt */;
+  }): Promise<PrinterResult>;
 }
