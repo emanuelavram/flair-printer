@@ -1,2 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required for Stripe Terminal Tap to Pay on Android -->
+    <uses-permission android:name="android.permission.NFC" />
+    <!-- required="false" so the app installs on non-NFC devices (printing still works) -->
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+    <!-- Required by Stripe Terminal discoverReaders -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 </manifest>

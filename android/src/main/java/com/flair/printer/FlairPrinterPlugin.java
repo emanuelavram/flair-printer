@@ -1,5 +1,7 @@
 package com.flair.printer;
 
+import android.Manifest;
+import android.annotation.SuppressLint;
 import android.graphics.Color;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
@@ -17,12 +19,15 @@ import android.os.Looper;
 import android.util.Base64;
 import android.util.Log;
 
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
 import com.github.anastaciocintra.escpos.EscPos;
 import com.github.anastaciocintra.escpos.EscPosConst;
 import com.github.anastaciocintra.escpos.image.BitImageWrapper;
@@ -39,7 +44,15 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.ArrayList;
 
-@CapacitorPlugin(name = "FlairPrinter")
+@CapacitorPlugin(
+    name = "FlairPrinter",
+    permissions = {
+        @Permission(
+            alias = "location",
+            strings = { Manifest.permission.ACCESS_FINE_LOCATION }
+        )
+    }
+)
 public class FlairPrinterPlugin extends Plugin {
     private static final String ACTION_USB_PERMISSION = "com.flair.printer.USB_PERMISSION";
     private UsbManager usbManager;
@@ -93,6 +106,7 @@ public class FlairPrinterPlugin extends Plugin {
         }
     };
 
+     @SuppressLint("UnspecifiedRegisterReceiverFlag")
      @Override
     public void load() {
          super.load();
@@ -450,6 +464,45 @@ public class FlairPrinterPlugin extends Plugin {
             connection.releaseInterface(usbInterface);
             connection.close();
             call.reject("Printing failed: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void executeTapAndPay(PluginCall call) {
+        String clientSecret = call.getString("paymentIntentClientSecret");
+        String connectionToken = call.getString("connectionToken");
+        String locationId = call.getString("locationId");
+        String merchantDisplayName = call.getString("merchantDisplayName");
+        boolean simulated = Boolean.TRUE.equals(call.getBoolean("simulated", false));
+
+        if (clientSecret == null || clientSecret.isEmpty()) { call.reject("paymentIntentClientSecret is required"); return; }
+        if (connectionToken == null || connectionToken.isEmpty()) { call.reject("connectionToken is required"); return; }
+        if (locationId == null || locationId.isEmpty()) { call.reject("locationId is required"); return; }
+        if (merchantDisplayName == null || merchantDisplayName.isEmpty()) { call.reject("merchantDisplayName is required"); return; }
+
+        if (getPermissionState("location") != PermissionState.GRANTED) {
+            requestPermissionForAlias("location", call, "locationPermissionCallback");
+            return;
+        }
+
+        StripeTerminalHandler.executeTapAndPay(
+            getContext(),
+            getActivity(),
+            connectionToken,
+            clientSecret,
+            locationId,
+            merchantDisplayName,
+            simulated,
+            call
+        );
+    }
+
+    @PermissionCallback
+    private void locationPermissionCallback(PluginCall call) {
+        if (getPermissionState("location") == PermissionState.GRANTED) {
+            executeTapAndPay(call);
+        } else {
+            call.reject("Location permission denied — required by Stripe Terminal discoverReaders");
         }
     }
 

@@ -18,6 +18,7 @@ npx cap sync
 * [`setPrinter(...)`](#setprinter)
 * [`removePrinter(...)`](#removeprinter)
 * [`printReceipt(...)`](#printreceipt)
+* [`executeTapAndPay(...)`](#executetapandpay)
 * [Interfaces](#interfaces)
 * [Type Aliases](#type-aliases)
 
@@ -93,6 +94,21 @@ printReceipt({ printerId, data, }: { printerId: string; data: { raw: number[]; l
 --------------------
 
 
+### executeTapAndPay(...)
+
+```typescript
+executeTapAndPay(options: TapAndPayOptions) => Promise<TapAndPayResult>
+```
+
+| Param         | Type                                                          |
+| ------------- | ------------------------------------------------------------- |
+| **`options`** | <code><a href="#tapandpayoptions">TapAndPayOptions</a></code> |
+
+**Returns:** <code>Promise&lt;<a href="#tapandpayresult">TapAndPayResult</a>&gt;</code>
+
+--------------------
+
+
 ### Interfaces
 
 
@@ -121,6 +137,27 @@ printReceipt({ printerId, data, }: { printerId: string; data: { raw: number[]; l
 | ------------- | -------------------- |
 | **`success`** | <code>boolean</code> |
 | **`message`** | <code>string</code>  |
+
+
+#### TapAndPayResult
+
+| Prop                  | Type                                                                    | Description                                                                                                                                                                                                                 |
+| --------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`status`**          | <code>'error' \| 'succeeded' \| 'requires_capture' \| 'canceled'</code> | succeeded — payment done (auto-capture PI) requires_capture — collected, call POST /capture on your backend with paymentIntentId canceled — user pressed Cancel on the overlay error — something failed, check errorMessage |
+| **`paymentIntentId`** | <code>string</code>                                                     | PaymentIntent ID — present for succeeded / requires_capture / canceled                                                                                                                                                      |
+| **`errorMessage`**    | <code>string</code>                                                     |                                                                                                                                                                                                                             |
+| **`errorCode`**       | <code>string</code>                                                     |                                                                                                                                                                                                                             |
+
+
+#### TapAndPayOptions
+
+| Prop                            | Type                 | Description                                                                                                                |
+| ------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **`paymentIntentClientSecret`** | <code>string</code>  | Client secret of a PaymentIntent created on your backend (payment_method_types: ['card_present'])                          |
+| **`connectionToken`**           | <code>string</code>  | Short-lived Terminal connection token — backend: stripe.terminal.connectionTokens.create() scoped to the connected account |
+| **`locationId`**                | <code>string</code>  | Stripe Terminal location ID belonging to the connected account                                                             |
+| **`merchantDisplayName`**       | <code>string</code>  | Business name shown on the native payment overlay                                                                          |
+| **`simulated`**                 | <code>boolean</code> | Use simulated reader — for testing only, no real card needed. Defaults to false.                                           |
 
 
 ### Type Aliases

@@ -57,4 +57,11 @@ dependencies {
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
 
     implementation 'com.github.anastaciocintra:escpos-coffee:4.1.0'
+
+    // Stripe Terminal — Tap to Pay on Android (Local Mobile reader).
+    // Check https://github.com/stripe/stripe-terminal-android for the latest version.
+    //implementation 'com.stripe:stripeterminal-localMobile:3.9.1'
+    //implementation "com.stripe:stripeterminal:5.5.1"
+    implementation("com.stripe:stripeterminal-taptopay:5.5.1")
+    implementation("com.stripe:stripeterminal-core:5.5.1")
 }

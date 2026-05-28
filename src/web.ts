@@ -1,5 +1,5 @@
 import { WebPlugin } from '@capacitor/core';
-import type { FlairPrinterPlugin, Printer, USBPrinter, PrinterResult } from './definitions';
+import type { FlairPrinterPlugin, Printer, USBPrinter, PrinterResult, TapAndPayOptions, TapAndPayResult } from './definitions';
 
 export class FlairPrinterWeb extends WebPlugin implements FlairPrinterPlugin {
   async getPrinters(): Promise<{ printers: Printer[] }> {
@@ -24,5 +24,9 @@ export class FlairPrinterWeb extends WebPlugin implements FlairPrinterPlugin {
 
   async printReceipt(_: any): Promise<PrinterResult> {
     throw this.unavailable('printReceipt is not available on web.');
+  }
+
+  async executeTapAndPay(_: TapAndPayOptions): Promise<TapAndPayResult> {
+    throw this.unavailable('executeTapAndPay is not available on web.');
   }
 }
