@@ -550,11 +550,13 @@ public class FlairPrinterPlugin extends Plugin {
     @PluginMethod
     public void setServerUrl(PluginCall call) {
         String url = call.getString("url");
+        Log.d("FPRINT_", "setServerUrl called, url=" + url);
         if (url == null || url.isEmpty()) {
             call.reject("url required");
             return;
         }
         prefs.edit().putString("server_url", url).apply();
+        Log.d("FPRINT_", "setServerUrl: saved to prefs, navigating");
         getBridge().getWebView().post(() -> getBridge().getWebView().loadUrl(url));
         call.resolve();
     }
