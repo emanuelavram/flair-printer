@@ -19,6 +19,12 @@ npx cap sync
 * [`removePrinter(...)`](#removeprinter)
 * [`printReceipt(...)`](#printreceipt)
 * [`executeTapAndPay(...)`](#executetapandpay)
+* [`provideConnectionToken(...)`](#provideconnectiontoken)
+* [`addListener('fetchConnectionToken', ...)`](#addlistenerfetchconnectiontoken-)
+* [`setServerUrl(...)`](#setserverurl)
+* [`getServerUrl()`](#getserverurl)
+* [`clearServerUrl()`](#clearserverurl)
+* [`openEnvPicker()`](#openenvpicker)
 * [Interfaces](#interfaces)
 * [Type Aliases](#type-aliases)
 
@@ -109,6 +115,92 @@ executeTapAndPay(options: TapAndPayOptions) => Promise<TapAndPayResult>
 --------------------
 
 
+### provideConnectionToken(...)
+
+```typescript
+provideConnectionToken(options: { token: string; }) => Promise<void>
+```
+
+Supply a fresh connection token to the Stripe Terminal SDK.
+Call this in response to the `fetchConnectionToken` event (re-auth / reconnect scenarios).
+
+| Param         | Type                            |
+| ------------- | ------------------------------- |
+| **`options`** | <code>{ token: string; }</code> |
+
+--------------------
+
+
+### addListener('fetchConnectionToken', ...)
+
+```typescript
+addListener(eventName: 'fetchConnectionToken', listenerFunc: () => void) => Promise<PluginListenerHandle>
+```
+
+Fired by the native plugin when the Stripe SDK needs a fresh connection token
+beyond the one originally passed to executeTapAndPay (e.g. SDK reconnect).
+Respond by fetching a new token from your backend and calling provideConnectionToken().
+
+| Param              | Type                                |
+| ------------------ | ----------------------------------- |
+| **`eventName`**    | <code>'fetchConnectionToken'</code> |
+| **`listenerFunc`** | <code>() =&gt; void</code>          |
+
+**Returns:** <code>Promise&lt;<a href="#pluginlistenerhandle">PluginListenerHandle</a>&gt;</code>
+
+--------------------
+
+
+### setServerUrl(...)
+
+```typescript
+setServerUrl(options: { url: string; }) => Promise<void>
+```
+
+Persist a new server URL and immediately navigate the WebView to it.
+
+| Param         | Type                          |
+| ------------- | ----------------------------- |
+| **`options`** | <code>{ url: string; }</code> |
+
+--------------------
+
+
+### getServerUrl()
+
+```typescript
+getServerUrl() => Promise<{ url: string | null; }>
+```
+
+Return the currently-saved server URL, or null if none is stored (falls back to build-time default).
+
+**Returns:** <code>Promise&lt;{ url: string | null; }&gt;</code>
+
+--------------------
+
+
+### clearServerUrl()
+
+```typescript
+clearServerUrl() => Promise<void>
+```
+
+Clear the saved server URL and open the env picker so the user can choose a new one.
+
+--------------------
+
+
+### openEnvPicker()
+
+```typescript
+openEnvPicker() => Promise<void>
+```
+
+Load the environment-switcher page (launcher.html) over the current WebView.
+
+--------------------
+
+
 ### Interfaces
 
 
@@ -158,6 +250,13 @@ executeTapAndPay(options: TapAndPayOptions) => Promise<TapAndPayResult>
 | **`locationId`**                | <code>string</code>  | Stripe Terminal location ID belonging to the connected account                                                             |
 | **`merchantDisplayName`**       | <code>string</code>  | Business name shown on the native payment overlay                                                                          |
 | **`simulated`**                 | <code>boolean</code> | Use simulated reader — for testing only, no real card needed. Defaults to false.                                           |
+
+
+#### PluginListenerHandle
+
+| Prop         | Type                                      |
+| ------------ | ----------------------------------------- |
+| **`remove`** | <code>() =&gt; Promise&lt;void&gt;</code> |
 
 
 ### Type Aliases

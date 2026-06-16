@@ -13,6 +13,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.hardware.usb.*;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -63,6 +64,7 @@ public class FlairPrinterPlugin extends Plugin {
     private UsbDevice pendingDevice;
     private byte[] escposData;
     private String logoBase64 = null;
+
 
 
     private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
@@ -485,10 +487,22 @@ public class FlairPrinterPlugin extends Plugin {
             return;
         }
 
+        final String initialToken = connectionToken;
+        java.util.concurrent.atomic.AtomicBoolean tokenConsumed = new java.util.concurrent.atomic.AtomicBoolean(false);
+        StripeTerminalHandler.TokenFetcher fetcher = tokenCallback -> {
+            if (tokenConsumed.compareAndSet(false, true)) {
+                Log.d("FPRINT_TokenFetch", "fetchConnectionToken (1st call) — returning provided token");
+                tokenCallback.onSuccess(initialToken);
+            } else {
+                Log.w("FPRINT_TokenFetch", "fetchConnectionToken called AGAIN within same payment — token already consumed");
+                tokenCallback.onFailure(new com.stripe.stripeterminal.external.models.ConnectionTokenException(
+                        "Token already consumed — call executeTapAndPay again with a fresh token"));
+            }
+        };
+
         StripeTerminalHandler.executeTapAndPay(
             getContext(),
-            getActivity(),
-            connectionToken,
+            fetcher,
             clientSecret,
             locationId,
             merchantDisplayName,
@@ -497,7 +511,7 @@ public class FlairPrinterPlugin extends Plugin {
         );
     }
 
-    @PermissionCallback
+@PermissionCallback
     private void locationPermissionCallback(PluginCall call) {
         if (getPermissionState("location") == PermissionState.GRANTED) {
             executeTapAndPay(call);
@@ -531,6 +545,51 @@ public class FlairPrinterPlugin extends Plugin {
         c.drawColor(Color.WHITE);
         c.drawBitmap(src, 0, 0, null);
         return out;
+    }
+
+    @PluginMethod
+    public void setServerUrl(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || url.isEmpty()) {
+            call.reject("url required");
+            return;
+        }
+        prefs.edit().putString("server_url", url).apply();
+        getBridge().getWebView().post(() -> getBridge().getWebView().loadUrl(url));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void getServerUrl(PluginCall call) {
+        String saved = prefs.getString("server_url", null);
+        JSObject result = new JSObject();
+        if (saved != null) {
+            result.put("url", saved);
+        } else {
+            result.put("url", JSObject.NULL);
+        }
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void clearServerUrl(PluginCall call) {
+        prefs.edit().remove("server_url").apply();
+        // Navigate to the env picker so the user can choose a new environment.
+        getBridge().getWebView().post(() ->
+                getBridge().getWebView().loadUrl("file:///android_asset/public/launcher.html"));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void openEnvPicker(PluginCall call) {
+        String current = getBridge().getWebView().getUrl();
+        String suffix = (current != null && !current.startsWith("file://"))
+                ? "?current=" + Uri.encode(current)
+                : "";
+        getBridge().getWebView().post(() ->
+                getBridge().getWebView().loadUrl(
+                        "file:///android_asset/public/launcher.html" + suffix));
+        call.resolve();
     }
 
 

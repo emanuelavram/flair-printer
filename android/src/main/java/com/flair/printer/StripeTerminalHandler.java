@@ -1,14 +1,12 @@
 package com.flair.printer;
 
 import android.annotation.SuppressLint;
-import android.app.Activity;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PluginCall;
@@ -55,24 +53,32 @@ public class StripeTerminalHandler {
     private static final String TAG = "FPRINT_Terminal";
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
+    /**
+     * Called by the plugin whenever Stripe needs a fresh connection token.
+     * The implementation decides how to source the token (e.g. pass through
+     * a JS-provided token on the first call, emit an event to JS on re-auth).
+     */
+    public interface TokenFetcher {
+        void fetchToken(@NonNull ConnectionTokenCallback callback);
+    }
+
     // Terminal is a process-wide singleton — can only be initialized once.
     private static volatile boolean initialized = false;
-    private static volatile String pendingToken = null;
+    private static volatile TokenFetcher tokenFetcher = null;
 
-    private static final ConnectionTokenProvider TOKEN_PROVIDER = new ConnectionTokenProvider() {
-        @Override
-        public void fetchConnectionToken(@NonNull ConnectionTokenCallback callback) {
-            String token = pendingToken;
-            if (token != null && !token.isEmpty()) {
-                callback.onSuccess(token);
-            } else {
-                callback.onFailure(new ConnectionTokenException("No connection token set"));
-            }
+    // Prevents concurrent Tap to Pay sessions from corrupting shared SDK state.
+    private static final AtomicBoolean busy = new AtomicBoolean(false);
+
+    private static final ConnectionTokenProvider TOKEN_PROVIDER = callback -> {
+        TokenFetcher fetcher = tokenFetcher;
+        if (fetcher != null) {
+            fetcher.fetchToken(callback);
+        } else {
+            callback.onFailure(new ConnectionTokenException("No token fetcher configured"));
         }
     };
 
-    // v5: TerminalListener only has default methods (onConnectionStatusChange, onPaymentStatusChange).
-    // onUnexpectedReaderDisconnect was removed from this interface.
+    // v5: TerminalListener only has default methods.
     private static final TerminalListener TERMINAL_LISTENER = new TerminalListener() {};
 
     // -------------------------------------------------------------------------
@@ -81,21 +87,29 @@ public class StripeTerminalHandler {
 
     public static void executeTapAndPay(
             Context context,
-            Activity activity,
-            String connectionToken,
+            TokenFetcher fetcher,
             String clientSecret,
             String locationId,
             String merchantDisplayName,
             boolean simulated,
             PluginCall call
     ) {
-        pendingToken = connectionToken;
+        if (!busy.compareAndSet(false, true)) {
+            JSObject r = new JSObject();
+            r.put("status", "error");
+            r.put("errorCode", "busy");
+            r.put("errorMessage", "A Tap to Pay transaction is already in progress");
+            call.resolve(r);
+            return;
+        }
+
+        tokenFetcher = fetcher;
 
         MAIN.post(() -> {
             if (!initialized) {
                 try {
                     // v5: Terminal.init() replaces Terminal.initTerminal(); OfflineListener is optional (null).
-                    Terminal.init(context, LogLevel.WARNING, TOKEN_PROVIDER, TERMINAL_LISTENER, null);
+                    Terminal.init(context, LogLevel.VERBOSE, TOKEN_PROVIDER, TERMINAL_LISTENER, null);
                     initialized = true;
                     Log.d(TAG, "Terminal initialized");
                 } catch (TerminalException e) {
@@ -307,6 +321,8 @@ public class StripeTerminalHandler {
 
     private static void resolveResult(
             PluginCall call, String status, String piId, String errorMsg, String errorCode) {
+        tokenFetcher = null; // clear so background SDK calls between payments don't consume a future token
+        busy.set(false);
         JSObject result = new JSObject();
         result.put("status", status);
         if (piId != null) result.put("paymentIntentId", piId);

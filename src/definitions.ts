@@ -1,3 +1,5 @@
+import type { PluginListenerHandle } from '@capacitor/core';
+
 type PrinterType = 'USB' | 'HTTP';
 
 export interface PrinterResult {
@@ -64,4 +66,26 @@ export interface FlairPrinterPlugin {
     data: { raw: number[]; logo?: string };
   }): Promise<PrinterResult>;
   executeTapAndPay(options: TapAndPayOptions): Promise<TapAndPayResult>;
+  /**
+   * Supply a fresh connection token to the Stripe Terminal SDK.
+   * Call this in response to the `fetchConnectionToken` event (re-auth / reconnect scenarios).
+   */
+  provideConnectionToken(options: { token: string }): Promise<void>;
+  /**
+   * Fired by the native plugin when the Stripe SDK needs a fresh connection token
+   * beyond the one originally passed to executeTapAndPay (e.g. SDK reconnect).
+   * Respond by fetching a new token from your backend and calling provideConnectionToken().
+   */
+  addListener(
+    eventName: 'fetchConnectionToken',
+    listenerFunc: () => void,
+  ): Promise<PluginListenerHandle>;
+  /** Persist a new server URL and immediately navigate the WebView to it. */
+  setServerUrl(options: { url: string }): Promise<void>;
+  /** Return the currently-saved server URL, or null if none is stored (falls back to build-time default). */
+  getServerUrl(): Promise<{ url: string | null }>;
+  /** Clear the saved server URL and open the env picker so the user can choose a new one. */
+  clearServerUrl(): Promise<void>;
+  /** Load the environment-switcher page (launcher.html) over the current WebView. */
+  openEnvPicker(): Promise<void>;
 }

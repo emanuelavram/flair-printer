@@ -29,4 +29,24 @@ export class FlairPrinterWeb extends WebPlugin implements FlairPrinterPlugin {
   async executeTapAndPay(_: TapAndPayOptions): Promise<TapAndPayResult> {
     throw this.unavailable('executeTapAndPay is not available on web.');
   }
+
+  async provideConnectionToken(_: { token: string }): Promise<void> {
+    throw this.unavailable('provideConnectionToken is not available on web.');
+  }
+
+  async setServerUrl(_: { url: string }): Promise<void> {
+    throw this.unavailable('setServerUrl is not available on web.');
+  }
+
+  async getServerUrl(): Promise<{ url: string | null }> {
+    throw this.unavailable('getServerUrl is not available on web.');
+  }
+
+  async clearServerUrl(): Promise<void> {
+    throw this.unavailable('clearServerUrl is not available on web.');
+  }
+
+  async openEnvPicker(): Promise<void> {
+    throw this.unavailable('openEnvPicker is not available on web.');
+  }
 }
