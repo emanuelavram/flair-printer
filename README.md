@@ -20,7 +20,7 @@ npx cap sync
 * [`printReceipt(...)`](#printreceipt)
 * [`executeTapAndPay(...)`](#executetapandpay)
 * [`provideConnectionToken(...)`](#provideconnectiontoken)
-* [`addListener('fetchConnectionToken', ...)`](#addlistenerfetchconnectiontoken-)
+* [`addListener('connectionTokenNeeded', ...)`](#addlistenerconnectiontokenneeded-)
 * [`setServerUrl(...)`](#setserverurl)
 * [`getServerUrl()`](#getserverurl)
 * [`clearServerUrl()`](#clearserverurl)
@@ -131,20 +131,20 @@ Call this in response to the `fetchConnectionToken` event (re-auth / reconnect s
 --------------------
 
 
-### addListener('fetchConnectionToken', ...)
+### addListener('connectionTokenNeeded', ...)
 
 ```typescript
-addListener(eventName: 'fetchConnectionToken', listenerFunc: () => void) => Promise<PluginListenerHandle>
+addListener(eventName: 'connectionTokenNeeded', listenerFunc: () => void) => Promise<PluginListenerHandle>
 ```
 
-Fired by the native plugin when the Stripe SDK needs a fresh connection token
-beyond the one originally passed to executeTapAndPay (e.g. SDK reconnect).
-Respond by fetching a new token from your backend and calling provideConnectionToken().
+Fired by the native plugin every time the Stripe Terminal SDK needs a fresh
+connection token (on init, discovery, connect, and any SDK reconnect).
+Fetch a new token from your backend and call provideConnectionToken().
 
-| Param              | Type                                |
-| ------------------ | ----------------------------------- |
-| **`eventName`**    | <code>'fetchConnectionToken'</code> |
-| **`listenerFunc`** | <code>() =&gt; void</code>          |
+| Param              | Type                                 |
+| ------------------ | ------------------------------------ |
+| **`eventName`**    | <code>'connectionTokenNeeded'</code> |
+| **`listenerFunc`** | <code>() =&gt; void</code>           |
 
 **Returns:** <code>Promise&lt;<a href="#pluginlistenerhandle">PluginListenerHandle</a>&gt;</code>
 
@@ -243,13 +243,12 @@ Load the environment-switcher page (launcher.html) over the current WebView.
 
 #### TapAndPayOptions
 
-| Prop                            | Type                 | Description                                                                                                                |
-| ------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **`paymentIntentClientSecret`** | <code>string</code>  | Client secret of a PaymentIntent created on your backend (payment_method_types: ['card_present'])                          |
-| **`connectionToken`**           | <code>string</code>  | Short-lived Terminal connection token — backend: stripe.terminal.connectionTokens.create() scoped to the connected account |
-| **`locationId`**                | <code>string</code>  | Stripe Terminal location ID belonging to the connected account                                                             |
-| **`merchantDisplayName`**       | <code>string</code>  | Business name shown on the native payment overlay                                                                          |
-| **`simulated`**                 | <code>boolean</code> | Use simulated reader — for testing only, no real card needed. Defaults to false.                                           |
+| Prop                            | Type                 | Description                                                                                       |
+| ------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------- |
+| **`paymentIntentClientSecret`** | <code>string</code>  | Client secret of a PaymentIntent created on your backend (payment_method_types: ['card_present']) |
+| **`locationId`**                | <code>string</code>  | Stripe Terminal location ID belonging to the connected account                                    |
+| **`merchantDisplayName`**       | <code>string</code>  | Business name shown on the native payment overlay                                                 |
+| **`simulated`**                 | <code>boolean</code> | Use simulated reader — for testing only, no real card needed. Defaults to false.                  |
 
 
 #### PluginListenerHandle

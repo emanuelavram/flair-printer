@@ -470,6 +470,17 @@ public class FlairPrinterPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void warmUp(PluginCall call) {
+        StripeTerminalHandler.TokenFetcher fetcher = tokenCallback -> {
+            Log.d("FPRINT_Terminal", "warmUp: Stripe SDK requesting connection token");
+            StripeTerminalHandler.parkTokenCallback(tokenCallback);
+            notifyListeners("connectionTokenNeeded", new JSObject());
+        };
+        StripeTerminalHandler.warmUp(getContext(), fetcher);
+        call.resolve();
+    }
+
+    @PluginMethod
     public void executeTapAndPay(PluginCall call) {
         Log.d("FPRINT_Terminal", "executeTapAndPay called");
         String clientSecret = call.getString("paymentIntentClientSecret");

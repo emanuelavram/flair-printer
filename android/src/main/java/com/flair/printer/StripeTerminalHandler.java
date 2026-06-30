@@ -69,6 +69,9 @@ public class StripeTerminalHandler {
     // Prevents concurrent Tap to Pay sessions from corrupting shared SDK state.
     private static final AtomicBoolean busy = new AtomicBoolean(false);
 
+    // Warmup discovery — cancelled and nulled when a real payment starts.
+    private static volatile Cancelable warmupDiscovery = null;
+
     // Holds a pending SDK token request while we wait for JS to supply a fresh token.
     private static final java.util.concurrent.atomic.AtomicReference<ConnectionTokenCallback>
             pendingTokenCallback = new java.util.concurrent.atomic.AtomicReference<>(null);
@@ -102,18 +105,81 @@ public class StripeTerminalHandler {
     }
 
     /**
-     * Called by the plugin when JS fails to provide a token (e.g. network error).
+     * Called by the plugin when JS reports it cannot provide a token.
+     * We deliberately do NOT call onFailure here — stale listeners (accumulated from previous
+     * payments) fire this immediately, and calling onFailure would cause the SDK to retry,
+     * which re-emits the event, which hits all stale listeners again → infinite spam loop.
+     * Instead, we keep the callback alive so the correct (async) listener can still win
+     * by calling provideConnectionToken() with a real token.
      */
     public static void rejectConnectionToken(String reason) {
-        ConnectionTokenCallback cb = pendingTokenCallback.getAndSet(null);
-        if (cb != null) {
-            Log.e(TAG, "connectionToken rejected by JS: " + reason);
-            cb.onFailure(new ConnectionTokenException(reason));
-        }
+        Log.w(TAG, "connectionToken rejection from JS ignored (likely stale listener): " + reason);
     }
 
     // v5: TerminalListener only has default methods.
     private static final TerminalListener TERMINAL_LISTENER = new TerminalListener() {};
+
+    // -------------------------------------------------------------------------
+    // Warmup — call on app launch to prime Stripe Terminal's reader cache
+    // -------------------------------------------------------------------------
+
+    public static void warmUp(Context context, TokenFetcher fetcher) {
+        if (busy.get()) {
+            Log.d(TAG, "warmUp skipped — payment in progress");
+            return;
+        }
+        tokenFetcher = fetcher;
+        MAIN.post(() -> {
+            if (!initialized) {
+                try {
+                    Terminal.init(context, LogLevel.VERBOSE, TOKEN_PROVIDER, TERMINAL_LISTENER, null);
+                    initialized = true;
+                    Log.d(TAG, "Terminal initialized (warmup)");
+                } catch (TerminalException e) {
+                    Log.e(TAG, "Warmup Terminal init failed: " + e.getMessage());
+                    tokenFetcher = null;
+                    return;
+                }
+            }
+            primeDiscovery(Terminal.getInstance());
+        });
+    }
+
+    @SuppressLint("MissingPermission")
+    private static void primeDiscovery(Terminal terminal) {
+        if (terminal.getConnectedReader() != null || warmupDiscovery != null) {
+            Log.d(TAG, "warmup primeDiscovery skipped — already connected or priming");
+            return;
+        }
+        Log.d(TAG, "warmup: starting discovery to prime reader cache");
+        AtomicBoolean found = new AtomicBoolean(false);
+        Cancelable[] holder = {null};
+        holder[0] = terminal.discoverReaders(
+                new DiscoveryConfiguration.TapToPayDiscoveryConfiguration(false),
+                readers -> {
+                    if (readers.isEmpty() || !found.compareAndSet(false, true)) return;
+                    Log.d(TAG, "warmup: reader found — canceling priming discovery");
+                    Cancelable c = holder[0];
+                    warmupDiscovery = null;
+                    if (c != null) c.cancel(new Callback() {
+                        @Override public void onSuccess() { Log.d(TAG, "warmup discovery canceled"); }
+                        @Override public void onFailure(@NonNull TerminalException e) {
+                            Log.d(TAG, "warmup discovery cancel: " + e.getMessage());
+                        }
+                    });
+                },
+                new Callback() {
+                    @Override public void onSuccess() { Log.d(TAG, "warmup discovery ended"); warmupDiscovery = null; }
+                    @Override public void onFailure(@NonNull TerminalException e) {
+                        warmupDiscovery = null;
+                        if (e.getErrorCode() != TerminalErrorCode.CANCELED) {
+                            Log.e(TAG, "warmup discovery failed: " + e.getMessage());
+                        }
+                    }
+                }
+        );
+        warmupDiscovery = holder[0];
+    }
 
     // -------------------------------------------------------------------------
     // Entry point — called from FlairPrinterPlugin
@@ -142,38 +208,55 @@ public class StripeTerminalHandler {
 
         MAIN.post(() -> {
             Log.d(TAG, "MAIN.post block started");
-            if (!initialized) {
-                try {
-                    // v5: Terminal.init() replaces Terminal.initTerminal(); OfflineListener is optional (null).
-                    Terminal.init(context, LogLevel.VERBOSE, TOKEN_PROVIDER, TERMINAL_LISTENER, null);
-                    initialized = true;
-                    Log.d(TAG, "Terminal initialized");
-                } catch (TerminalException e) {
-                    Log.e(TAG, "Init failed: " + e.getMessage());
-                    resolveError(call, "terminal_init_failed", e.getMessage());
-                    return;
-                }
-            }
 
-            Terminal terminal = Terminal.getInstance();
-
-            // Disconnect a stale reader before starting a new payment.
-            if (terminal.getConnectedReader() != null) {
-                Log.d(TAG, "Stale reader — disconnecting first");
-                terminal.disconnectReader(new Callback() {
-                    @Override public void onSuccess() {
-                        Log.d(TAG, "Stale reader disconnected");
-                        startDiscovery(terminal, clientSecret, locationId, merchantDisplayName, simulated, call);
-                    }
-                    @Override public void onFailure(@NonNull TerminalException e) {
-                        Log.d(TAG, "Stale reader disconnect failed: " + e.getMessage());
-                        startDiscovery(terminal, clientSecret, locationId, merchantDisplayName, simulated, call);
-                    }
+            // Cancel any in-progress warmup discovery so it doesn't conflict.
+            Cancelable warmup = warmupDiscovery;
+            if (warmup != null) {
+                warmupDiscovery = null;
+                Log.d(TAG, "Canceling warmup discovery before payment");
+                warmup.cancel(new Callback() {
+                    @Override public void onSuccess() { continuePayment(context, fetcher, clientSecret, locationId, merchantDisplayName, simulated, call); }
+                    @Override public void onFailure(@NonNull TerminalException e) { continuePayment(context, fetcher, clientSecret, locationId, merchantDisplayName, simulated, call); }
                 });
-            } else {
-                startDiscovery(terminal, clientSecret, locationId, merchantDisplayName, simulated, call);
+                return;
             }
+
+            continuePayment(context, fetcher, clientSecret, locationId, merchantDisplayName, simulated, call);
         });
+    }
+
+    private static void continuePayment(Context context, TokenFetcher fetcher,
+            String clientSecret, String locationId, String merchantDisplayName,
+            boolean simulated, PluginCall call) {
+        if (!initialized) {
+            try {
+                Terminal.init(context, LogLevel.VERBOSE, TOKEN_PROVIDER, TERMINAL_LISTENER, null);
+                initialized = true;
+                Log.d(TAG, "Terminal initialized");
+            } catch (TerminalException e) {
+                Log.e(TAG, "Init failed: " + e.getMessage());
+                resolveError(call, "terminal_init_failed", e.getMessage());
+                return;
+            }
+        }
+
+        Terminal terminal = Terminal.getInstance();
+
+        if (terminal.getConnectedReader() != null) {
+            Log.d(TAG, "Stale reader — disconnecting first");
+            terminal.disconnectReader(new Callback() {
+                @Override public void onSuccess() {
+                    Log.d(TAG, "Stale reader disconnected");
+                    startDiscovery(terminal, clientSecret, locationId, merchantDisplayName, simulated, call);
+                }
+                @Override public void onFailure(@NonNull TerminalException e) {
+                    Log.d(TAG, "Stale reader disconnect failed: " + e.getMessage());
+                    startDiscovery(terminal, clientSecret, locationId, merchantDisplayName, simulated, call);
+                }
+            });
+        } else {
+            startDiscovery(terminal, clientSecret, locationId, merchantDisplayName, simulated, call);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -365,7 +448,12 @@ public class StripeTerminalHandler {
 
     private static void resolveResult(
             PluginCall call, String status, String piId, String errorMsg, String errorCode) {
-        tokenFetcher = null; // clear so background SDK calls between payments don't consume a future token
+        tokenFetcher = null;
+        // Discard any pending token callback — payment is over, no token will be needed.
+        ConnectionTokenCallback pending = pendingTokenCallback.getAndSet(null);
+        if (pending != null) {
+            pending.onFailure(new ConnectionTokenException("Payment ended"));
+        }
         busy.set(false);
         JSObject result = new JSObject();
         result.put("status", status);
