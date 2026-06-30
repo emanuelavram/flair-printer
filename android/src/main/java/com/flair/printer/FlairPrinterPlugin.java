@@ -471,14 +471,13 @@ public class FlairPrinterPlugin extends Plugin {
 
     @PluginMethod
     public void executeTapAndPay(PluginCall call) {
+        Log.d("FPRINT_Terminal", "executeTapAndPay called");
         String clientSecret = call.getString("paymentIntentClientSecret");
-        String connectionToken = call.getString("connectionToken");
         String locationId = call.getString("locationId");
         String merchantDisplayName = call.getString("merchantDisplayName");
         boolean simulated = Boolean.TRUE.equals(call.getBoolean("simulated", false));
 
         if (clientSecret == null || clientSecret.isEmpty()) { call.reject("paymentIntentClientSecret is required"); return; }
-        if (connectionToken == null || connectionToken.isEmpty()) { call.reject("connectionToken is required"); return; }
         if (locationId == null || locationId.isEmpty()) { call.reject("locationId is required"); return; }
         if (merchantDisplayName == null || merchantDisplayName.isEmpty()) { call.reject("merchantDisplayName is required"); return; }
 
@@ -486,20 +485,15 @@ public class FlairPrinterPlugin extends Plugin {
             requestPermissionForAlias("location", call, "locationPermissionCallback");
             return;
         }
+        Log.d("FPRINT_Terminal", "location permission is fine");
 
-        final String initialToken = connectionToken;
-        java.util.concurrent.atomic.AtomicBoolean tokenConsumed = new java.util.concurrent.atomic.AtomicBoolean(false);
         StripeTerminalHandler.TokenFetcher fetcher = tokenCallback -> {
-            if (tokenConsumed.compareAndSet(false, true)) {
-                Log.d("FPRINT_TokenFetch", "fetchConnectionToken (1st call) — returning provided token");
-                tokenCallback.onSuccess(initialToken);
-            } else {
-                Log.w("FPRINT_TokenFetch", "fetchConnectionToken called AGAIN within same payment — token already consumed");
-                tokenCallback.onFailure(new com.stripe.stripeterminal.external.models.ConnectionTokenException(
-                        "Token already consumed — call executeTapAndPay again with a fresh token"));
-            }
+            Log.d("FPRINT_Terminal", "Stripe SDK requesting connection token — emitting connectionTokenNeeded to JS");
+            StripeTerminalHandler.parkTokenCallback(tokenCallback);
+            notifyListeners("connectionTokenNeeded", new JSObject());
         };
 
+        Log.d("FPRINT_Terminal", "calling StripeTerminalHandler.executeTapAndPay");
         StripeTerminalHandler.executeTapAndPay(
             getContext(),
             fetcher,
@@ -511,7 +505,22 @@ public class FlairPrinterPlugin extends Plugin {
         );
     }
 
-@PermissionCallback
+    @PluginMethod
+    public void provideConnectionToken(PluginCall call) {
+        String token = call.getString("token");
+        String error = call.getString("error");
+        if (error != null) {
+            Log.e("FPRINT_Terminal", "JS failed to provide connection token: " + error);
+            StripeTerminalHandler.rejectConnectionToken(error);
+        } else if (token != null && !token.isEmpty()) {
+            StripeTerminalHandler.provideConnectionToken(token);
+        } else {
+            StripeTerminalHandler.rejectConnectionToken("No token provided");
+        }
+        call.resolve();
+    }
+
+    @PermissionCallback
     private void locationPermissionCallback(PluginCall call) {
         if (getPermissionState("location") == PermissionState.GRANTED) {
             executeTapAndPay(call);

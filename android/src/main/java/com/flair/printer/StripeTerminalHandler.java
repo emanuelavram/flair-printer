@@ -69,6 +69,10 @@ public class StripeTerminalHandler {
     // Prevents concurrent Tap to Pay sessions from corrupting shared SDK state.
     private static final AtomicBoolean busy = new AtomicBoolean(false);
 
+    // Holds a pending SDK token request while we wait for JS to supply a fresh token.
+    private static final java.util.concurrent.atomic.AtomicReference<ConnectionTokenCallback>
+            pendingTokenCallback = new java.util.concurrent.atomic.AtomicReference<>(null);
+
     private static final ConnectionTokenProvider TOKEN_PROVIDER = callback -> {
         TokenFetcher fetcher = tokenFetcher;
         if (fetcher != null) {
@@ -77,6 +81,36 @@ public class StripeTerminalHandler {
             callback.onFailure(new ConnectionTokenException("No token fetcher configured"));
         }
     };
+
+    /** Called by the plugin's TokenFetcher to park the SDK callback while waiting for JS. */
+    public static void parkTokenCallback(ConnectionTokenCallback callback) {
+        pendingTokenCallback.set(callback);
+    }
+
+    /**
+     * Called by the plugin when JS provides a fresh connection token in response
+     * to a "connectionTokenNeeded" event. Fulfills the pending SDK callback.
+     */
+    public static void provideConnectionToken(String token) {
+        ConnectionTokenCallback cb = pendingTokenCallback.getAndSet(null);
+        if (cb != null) {
+            Log.d(TAG, "connectionToken provided by JS, forwarding to Stripe SDK");
+            cb.onSuccess(token);
+        } else {
+            Log.w(TAG, "provideConnectionToken called but no pending callback — ignoring");
+        }
+    }
+
+    /**
+     * Called by the plugin when JS fails to provide a token (e.g. network error).
+     */
+    public static void rejectConnectionToken(String reason) {
+        ConnectionTokenCallback cb = pendingTokenCallback.getAndSet(null);
+        if (cb != null) {
+            Log.e(TAG, "connectionToken rejected by JS: " + reason);
+            cb.onFailure(new ConnectionTokenException(reason));
+        }
+    }
 
     // v5: TerminalListener only has default methods.
     private static final TerminalListener TERMINAL_LISTENER = new TerminalListener() {};
@@ -94,6 +128,7 @@ public class StripeTerminalHandler {
             boolean simulated,
             PluginCall call
     ) {
+        Log.d(TAG, "StripeTerminalHandler.executeTapAndPay called");
         if (!busy.compareAndSet(false, true)) {
             JSObject r = new JSObject();
             r.put("status", "error");
@@ -106,6 +141,7 @@ public class StripeTerminalHandler {
         tokenFetcher = fetcher;
 
         MAIN.post(() -> {
+            Log.d(TAG, "MAIN.post block started");
             if (!initialized) {
                 try {
                     // v5: Terminal.init() replaces Terminal.initTerminal(); OfflineListener is optional (null).
@@ -126,9 +162,11 @@ public class StripeTerminalHandler {
                 Log.d(TAG, "Stale reader — disconnecting first");
                 terminal.disconnectReader(new Callback() {
                     @Override public void onSuccess() {
+                        Log.d(TAG, "Stale reader disconnected");
                         startDiscovery(terminal, clientSecret, locationId, merchantDisplayName, simulated, call);
                     }
                     @Override public void onFailure(@NonNull TerminalException e) {
+                        Log.d(TAG, "Stale reader disconnect failed: " + e.getMessage());
                         startDiscovery(terminal, clientSecret, locationId, merchantDisplayName, simulated, call);
                     }
                 });
@@ -151,6 +189,7 @@ public class StripeTerminalHandler {
             boolean simulated,
             PluginCall call
     ) {
+        Log.d(TAG, "startDiscovery called");
         DiscoveryConfiguration.TapToPayDiscoveryConfiguration config =
                 new DiscoveryConfiguration.TapToPayDiscoveryConfiguration(simulated);
 
@@ -173,9 +212,11 @@ public class StripeTerminalHandler {
                         if (c != null) {
                             c.cancel(new Callback() {
                                 @Override public void onSuccess() {
+                                    Log.d(TAG, "Discovery canceled, connecting to reader");
                                     MAIN.post(() -> connectReader(terminal, reader, clientSecret, locationId, merchantDisplayName, call));
                                 }
                                 @Override public void onFailure(@NonNull TerminalException e) {
+                                    Log.d(TAG, "Discovery cancel failed (" + e.getMessage() + "), connecting to reader anyway");
                                     MAIN.post(() -> connectReader(terminal, reader, clientSecret, locationId, merchantDisplayName, call));
                                 }
                             });
@@ -216,6 +257,7 @@ public class StripeTerminalHandler {
                         merchantDisplayName
                 );
 
+        Log.d(TAG, "connectReader called");
         // v5: connectLocalMobileReader → connectReader (unified method for all reader types)
         terminal.connectReader(
                 reader,
@@ -240,6 +282,7 @@ public class StripeTerminalHandler {
     // -------------------------------------------------------------------------
 
     private static void retrievePaymentIntent(Terminal terminal, String clientSecret, PluginCall call) {
+        Log.d(TAG, "retrievePaymentIntent called");
         terminal.retrievePaymentIntent(clientSecret, new PaymentIntentCallback() {
             @Override
             public void onSuccess(@NonNull PaymentIntent pi) {
@@ -259,6 +302,7 @@ public class StripeTerminalHandler {
     // -------------------------------------------------------------------------
 
     private static void collectPaymentMethod(Terminal terminal, PaymentIntent pi, PluginCall call) {
+        Log.d(TAG, "collectPaymentMethod called");
         // v5: CollectConfiguration → CollectPaymentIntentConfiguration; config is now the LAST param.
         CollectPaymentIntentConfiguration collectConfig =
                 new CollectPaymentIntentConfiguration.Builder().build();

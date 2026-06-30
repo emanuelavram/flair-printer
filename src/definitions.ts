@@ -23,8 +23,6 @@ export interface USBPrinter {
 export interface TapAndPayOptions {
   /** Client secret of a PaymentIntent created on your backend (payment_method_types: ['card_present']) */
   paymentIntentClientSecret: string;
-  /** Short-lived Terminal connection token — backend: stripe.terminal.connectionTokens.create() scoped to the connected account */
-  connectionToken: string;
   /** Stripe Terminal location ID belonging to the connected account */
   locationId: string;
   /** Business name shown on the native payment overlay */
@@ -72,12 +70,12 @@ export interface FlairPrinterPlugin {
    */
   provideConnectionToken(options: { token: string }): Promise<void>;
   /**
-   * Fired by the native plugin when the Stripe SDK needs a fresh connection token
-   * beyond the one originally passed to executeTapAndPay (e.g. SDK reconnect).
-   * Respond by fetching a new token from your backend and calling provideConnectionToken().
+   * Fired by the native plugin every time the Stripe Terminal SDK needs a fresh
+   * connection token (on init, discovery, connect, and any SDK reconnect).
+   * Fetch a new token from your backend and call provideConnectionToken().
    */
   addListener(
-    eventName: 'fetchConnectionToken',
+    eventName: 'connectionTokenNeeded',
     listenerFunc: () => void,
   ): Promise<PluginListenerHandle>;
   /** Persist a new server URL and immediately navigate the WebView to it. */
