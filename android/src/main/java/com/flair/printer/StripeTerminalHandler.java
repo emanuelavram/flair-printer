@@ -123,7 +123,7 @@ public class StripeTerminalHandler {
     // Warmup — call on app launch to prime Stripe Terminal's reader cache
     // -------------------------------------------------------------------------
 
-    public static void warmUp(Context context, TokenFetcher fetcher) {
+    public static void warmUp(Context context, TokenFetcher fetcher, boolean simulated) {
         if (busy.get()) {
             Log.d(TAG, "warmUp skipped — payment in progress");
             return;
@@ -141,21 +141,21 @@ public class StripeTerminalHandler {
                     return;
                 }
             }
-            primeDiscovery(Terminal.getInstance());
+            primeDiscovery(Terminal.getInstance(), simulated);
         });
     }
 
     @SuppressLint("MissingPermission")
-    private static void primeDiscovery(Terminal terminal) {
+    private static void primeDiscovery(Terminal terminal, boolean simulated) {
         if (terminal.getConnectedReader() != null || warmupDiscovery != null) {
             Log.d(TAG, "warmup primeDiscovery skipped — already connected or priming");
             return;
         }
-        Log.d(TAG, "warmup: starting discovery to prime reader cache");
+        Log.d(TAG, "warmup: starting discovery to prime reader cache (simulated=" + simulated + ")");
         AtomicBoolean found = new AtomicBoolean(false);
         Cancelable[] holder = {null};
         holder[0] = terminal.discoverReaders(
-                new DiscoveryConfiguration.TapToPayDiscoveryConfiguration(false),
+                new DiscoveryConfiguration.TapToPayDiscoveryConfiguration(simulated),
                 readers -> {
                     if (readers.isEmpty() || !found.compareAndSet(false, true)) return;
                     Log.d(TAG, "warmup: reader found — canceling priming discovery");

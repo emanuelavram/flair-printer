@@ -68,7 +68,7 @@ export interface FlairPrinterPlugin {
    * Call this on app/device page load with the connectionTokenNeeded listener already set up.
    * Fire-and-forget — resolves immediately while warmup runs in the background.
    */
-  warmUp(): Promise<void>;
+  warmUp(options?: { simulated?: boolean }): Promise<void>;
   executeTapAndPay(options: TapAndPayOptions): Promise<TapAndPayResult>;
   /**
    * Supply a fresh connection token to the Stripe Terminal SDK.

@@ -471,12 +471,13 @@ public class FlairPrinterPlugin extends Plugin {
 
     @PluginMethod
     public void warmUp(PluginCall call) {
+        boolean simulated = Boolean.TRUE.equals(call.getBoolean("simulated", false));
         StripeTerminalHandler.TokenFetcher fetcher = tokenCallback -> {
             Log.d("FPRINT_Terminal", "warmUp: Stripe SDK requesting connection token");
             StripeTerminalHandler.parkTokenCallback(tokenCallback);
             notifyListeners("connectionTokenNeeded", new JSObject());
         };
-        StripeTerminalHandler.warmUp(getContext(), fetcher);
+        StripeTerminalHandler.warmUp(getContext(), fetcher, simulated);
         call.resolve();
     }
 

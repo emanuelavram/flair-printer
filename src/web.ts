@@ -26,7 +26,7 @@ export class FlairPrinterWeb extends WebPlugin implements FlairPrinterPlugin {
     throw this.unavailable('printReceipt is not available on web.');
   }
 
-  async warmUp(): Promise<void> {
+  async warmUp(_?: { simulated?: boolean }): Promise<void> {
     throw this.unavailable('warmUp is not available on web.');
   }
 

@@ -18,7 +18,7 @@ npx cap sync
 * [`setPrinter(...)`](#setprinter)
 * [`removePrinter(...)`](#removeprinter)
 * [`printReceipt(...)`](#printreceipt)
-* [`warmUp()`](#warmup)
+* [`warmUp(...)`](#warmup)
 * [`executeTapAndPay(...)`](#executetapandpay)
 * [`provideConnectionToken(...)`](#provideconnectiontoken)
 * [`addListener('connectionTokenNeeded', ...)`](#addlistenerconnectiontokenneeded-)
@@ -101,15 +101,19 @@ printReceipt({ printerId, data, }: { printerId: string; data: { raw: number[]; l
 --------------------
 
 
-### warmUp()
+### warmUp(...)
 
 ```typescript
-warmUp() => Promise<void>
+warmUp(options?: { simulated?: boolean | undefined; } | undefined) => Promise<void>
 ```
 
 Prime the Stripe Terminal SDK in the background so the first payment is fast.
 Call this on app/device page load with the connectionTokenNeeded listener already set up.
 Fire-and-forget — resolves immediately while warmup runs in the background.
+
+| Param         | Type                                  |
+| ------------- | ------------------------------------- |
+| **`options`** | <code>{ simulated?: boolean; }</code> |
 
 --------------------
 
