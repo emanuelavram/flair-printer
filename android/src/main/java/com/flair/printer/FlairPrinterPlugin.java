@@ -471,6 +471,11 @@ public class FlairPrinterPlugin extends Plugin {
 
     @PluginMethod
     public void warmUp(PluginCall call) {
+        if (getPermissionState("location") != PermissionState.GRANTED) {
+            Log.d("FPRINT_Terminal", "warmUp: location permission not granted, skipping silently");
+            call.resolve();
+            return;
+        }
         boolean simulated = Boolean.TRUE.equals(call.getBoolean("simulated", false));
         StripeTerminalHandler.TokenFetcher fetcher = tokenCallback -> {
             Log.d("FPRINT_Terminal", "warmUp: Stripe SDK requesting connection token");
