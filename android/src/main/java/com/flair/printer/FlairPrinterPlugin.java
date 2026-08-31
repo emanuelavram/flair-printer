@@ -40,7 +40,10 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.IOException;
 import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.util.Iterator;
 import java.util.List;
 import java.util.ArrayList;
@@ -137,6 +140,63 @@ public class FlairPrinterPlugin extends Plugin {
         getContext().unregisterReceiver(usbReceiver); // ✅ Clean up
     }
 
+    /**
+     * Android has no print spooler, so there are no queues to offer. Resolves instead
+     * of rejecting: the shared printer dialog uses `supported` to decide whether to
+     * show the WINDOWS type, and Capacitor defines this method on every platform, so
+     * the client cannot feature-detect any other way.
+     */
+    @PluginMethod
+    public void listSystemPrinters(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("supported", false);
+        result.put("printers", new JSArray());
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void probePrinter(PluginCall call) {
+        String transport = PrinterTransport.transportOf(call.getString("type"));
+        JSObject result = new JSObject();
+
+        if (!"network".equals(transport)) {
+            result.put("reachable", false);
+            result.put("error", "Only network printers can be probed");
+            call.resolve(result);
+            return;
+        }
+
+        final String connectionInfo = call.getString("connectionInfo");
+        new Thread(() -> {
+            JSObject probe = new JSObject();
+            String[] target;
+            try {
+                target = PrinterTransport.parseTcpTarget(connectionInfo);
+            } catch (IllegalArgumentException e) {
+                probe.put("reachable", false);
+                probe.put("error", e.getMessage());
+                call.resolve(probe);
+                return;
+            }
+
+            String label = target[0] + ":" + target[1];
+            probe.put("target", label);
+            long started = System.currentTimeMillis();
+            Socket socket = new Socket();
+            try {
+                socket.connect(new InetSocketAddress(target[0], Integer.parseInt(target[1])), PrinterTransport.CONNECT_TIMEOUT_MS);
+                probe.put("reachable", true);
+                probe.put("latencyMs", System.currentTimeMillis() - started);
+            } catch (Exception e) {
+                probe.put("reachable", false);
+                probe.put("error", e.getMessage() == null ? e.toString() : e.getMessage());
+            } finally {
+                try { socket.close(); } catch (IOException ignored) {}
+            }
+            call.resolve(probe);
+        }).start();
+    }
+
     @PluginMethod
     public void scanUsbPrinters(PluginCall call) {
         usbManager = (UsbManager) getContext().getSystemService(Context.USB_SERVICE);
@@ -195,7 +255,13 @@ public class FlairPrinterPlugin extends Plugin {
         try {
             JSONObject printersObj = new JSONObject(json);
             printersObj.put(id, new JSONObject(printerConfig.toString()));
-            prefs.edit().putString(PRINTERS_KEY, printersObj.toString()).apply();
+            // commit(), not apply(): apply() writes to disk on a background thread, so a
+            // process death right after setup would lose a config we already reported
+            // as saved. This runs once during setup, so the blocking write is free.
+            if (!prefs.edit().putString(PRINTERS_KEY, printersObj.toString()).commit()) {
+                call.reject("Failed to write printer to storage");
+                return;
+            }
         } catch (JSONException e) {
             call.reject("Failed to save printer", e);
             return;
@@ -219,7 +285,10 @@ public class FlairPrinterPlugin extends Plugin {
         try {
             JSONObject printersObj = new JSONObject(json);
             printersObj.remove(printerId); // Remove printer by ID
-            prefs.edit().putString(PRINTERS_KEY, printersObj.toString()).apply();
+            if (!prefs.edit().putString(PRINTERS_KEY, printersObj.toString()).commit()) {
+                call.reject("Failed to write printer to storage");
+                return;
+            }
         } catch (JSONException e) {
             call.reject("Failed to remove printer", e);
             return;
@@ -288,58 +357,193 @@ public class FlairPrinterPlugin extends Plugin {
             }
 
             JSONObject printerConfig = printersObj.getJSONObject(printerId);
-            String connectionInfo = printerConfig.optString("connectionInfo", null);
-
-            if (connectionInfo == null || !connectionInfo.contains("x")) {
-                call.reject("Invalid or missing connectionInfo for printer " + printerId);
-                return;
-            }
-
-            String[] parts = connectionInfo.split("x");
-            if (parts.length != 2) {
-                call.reject("Invalid connectionInfo format for printer " + printerId);
-                return;
-            }
-
-            int vendorId = Integer.parseInt(parts[0]);
-            int productId = Integer.parseInt(parts[1]);
-
-            usbManager = (UsbManager) getContext().getSystemService(Context.USB_SERVICE);
-
-            UsbDevice target = findDevice(vendorId, productId);
-            if (target == null) {
-                call.reject("USB printer not found (" + vendorId + "x" + productId + ")");
-                return;
-            }
-
-            if (usbManager.hasPermission(target)) {
-                Log.d("FPRINT_printReceipt", "already have permission: call printToUsbDevice");
-                // Already granted — print now
-                printToUsbDevice(target, logoBase64, escposData, call);
-                return;
-            }
-
-            // Request permission
-            pendingCall = call;
-            pendingDevice = target;
-
-            int flags = PendingIntent.FLAG_UPDATE_CURRENT
-                    | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0);
-
-            PendingIntent permissionIntent = PendingIntent.getBroadcast(
-                    getContext(),
-                    0,
-                    new Intent(ACTION_USB_PERMISSION)
-                            .setPackage(getContext().getPackageName()), // scope to our app
-                    flags
-            );
-
-            Log.d("FPRINT_printReceipt", "requestPermission for device: " + target);
-            usbManager.requestPermission(target, permissionIntent);
+            dispatchPrint(printerConfig, logoBase64, escposData, call);
 
         } catch (JSONException e) {
             call.reject("Failed to load printer config", e);
         }
+    }
+
+    /** Prints a short diagnostic receipt so a newly configured printer can be verified. */
+    @PluginMethod
+    public void testPrint(PluginCall call) {
+        String printerId = call.getString("printerId");
+        if (printerId == null || printerId.isEmpty()) {
+            printerId = call.getString("id");
+        }
+        if (printerId == null || printerId.isEmpty()) {
+            call.reject("Printer ID is required");
+            return;
+        }
+
+        String json = prefs.getString(PRINTERS_KEY, "{}");
+        try {
+            JSONObject printersObj = new JSONObject(json);
+            if (!printersObj.has(printerId)) {
+                call.reject("Printer not found for ID: " + printerId);
+                return;
+            }
+
+            JSONObject printerConfig = printersObj.getJSONObject(printerId);
+            String transport = PrinterTransport.transportOf(printerConfig.optString("type", "USB"));
+            String target = "network".equals(transport)
+                    ? printerConfig.optString("connectionInfo", "-")
+                    : "USB " + printerConfig.optString("connectionInfo", "-");
+
+            byte[] receipt = PrinterTransport.buildTestReceipt(
+                    printerConfig.optString("name", printerId),
+                    transport == null ? printerConfig.optString("type", "-") : transport,
+                    target
+            );
+            dispatchPrint(printerConfig, null, receipt, call);
+
+        } catch (JSONException e) {
+            call.reject("Failed to load printer config", e);
+        }
+    }
+
+    /**
+     * Routes a rendered job to the transport its config asks for. Shared by
+     * printReceipt and testPrint so both behave identically.
+     */
+    private void dispatchPrint(JSONObject printerConfig, String logo, byte[] data, PluginCall call) {
+        String rawType = printerConfig.optString("type", "USB");
+        String transport = PrinterTransport.transportOf(rawType);
+
+        if (transport == null) {
+            call.reject("Unsupported printer type: " + rawType);
+            return;
+        }
+
+        if ("windows".equals(transport)) {
+            call.reject("Windows queue printers are only available in the desktop app");
+            return;
+        }
+
+        if ("network".equals(transport)) {
+            printToNetworkDevice(printerConfig.optString("connectionInfo", null), logo, data, call);
+            return;
+        }
+
+        // --- USB ---
+        String connectionInfo = printerConfig.optString("connectionInfo", null);
+        if (connectionInfo == null || !connectionInfo.contains("x")) {
+            call.reject("Invalid or missing connectionInfo for USB printer (expected vendorIdxproductId)");
+            return;
+        }
+
+        String[] parts = connectionInfo.split("x");
+        if (parts.length != 2) {
+            call.reject("Invalid connectionInfo format for USB printer (expected vendorIdxproductId)");
+            return;
+        }
+
+        int vendorId;
+        int productId;
+        try {
+            vendorId = Integer.parseInt(parts[0].trim());
+            productId = Integer.parseInt(parts[1].trim());
+        } catch (NumberFormatException e) {
+            // Without this, a non-USB address that happens to contain an "x" throws
+            // out of the JSONException catch and leaves the call unresolved forever.
+            call.reject("Invalid USB ids in connectionInfo: " + connectionInfo);
+            return;
+        }
+
+        usbManager = (UsbManager) getContext().getSystemService(Context.USB_SERVICE);
+
+        UsbDevice target = findDevice(vendorId, productId);
+        if (target == null) {
+            call.reject("USB printer not found (" + vendorId + "x" + productId + ")");
+            return;
+        }
+
+        // The permission broadcast finishes the job later, so the payload has to
+        // outlive this call.
+        this.logoBase64 = logo;
+        this.escposData = data;
+
+        if (usbManager.hasPermission(target)) {
+            Log.d("FPRINT_printReceipt", "already have permission: call printToUsbDevice");
+            // Already granted — print now
+            printToUsbDevice(target, logo, data, call);
+            return;
+        }
+
+        // Request permission
+        pendingCall = call;
+        pendingDevice = target;
+
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT
+                | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0);
+
+        PendingIntent permissionIntent = PendingIntent.getBroadcast(
+                getContext(),
+                0,
+                new Intent(ACTION_USB_PERMISSION)
+                        .setPackage(getContext().getPackageName()), // scope to our app
+                flags
+        );
+
+        Log.d("FPRINT_printReceipt", "requestPermission for device: " + target);
+        usbManager.requestPermission(target, permissionIntent);
+    }
+
+    private void printToNetworkDevice(String connectionInfo, String logo, byte[] data, PluginCall call) {
+        final String[] target;
+        try {
+            target = PrinterTransport.parseTcpTarget(connectionInfo);
+        } catch (IllegalArgumentException e) {
+            call.reject(e.getMessage());
+            return;
+        }
+
+        final String logoData = logo;
+        // Sockets on the main thread throw NetworkOnMainThreadException.
+        new Thread(() -> {
+            Socket socket = new Socket();
+            try {
+                socket.connect(
+                        new InetSocketAddress(target[0], Integer.parseInt(target[1])),
+                        PrinterTransport.CONNECT_TIMEOUT_MS
+                );
+                OutputStream out = socket.getOutputStream();
+                EscPos escpos = new EscPos(out);
+
+                writeLogo(escpos, logoData);
+                out.write(data);
+                out.flush();
+                escpos.close();
+
+                Log.d("FPRINT_printToNetworkDevice", "print success " + target[0] + ":" + target[1]);
+                JSObject resultObj = new JSObject();
+                resultObj.put("success", true);
+                call.resolve(resultObj);
+            } catch (Exception e) {
+                call.reject("Printing failed: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+            } finally {
+                try { socket.close(); } catch (IOException ignored) {}
+            }
+        }).start();
+    }
+
+    /** Renders the optional receipt logo. Shared by the USB and network transports. */
+    private void writeLogo(EscPos escpos, String logo) throws IOException {
+        if (logo == null || logo.isEmpty()) return;
+
+        String base64 = logo.startsWith("data:") ? logo.substring(logo.indexOf(',') + 1) : logo;
+        byte[] logoBytes = Base64.decode(base64, Base64.DEFAULT);
+        Bitmap logoBitmap = BitmapFactory.decodeByteArray(logoBytes, 0, logoBytes.length);
+        if (logoBitmap == null) return;
+
+        // Raster mode aligns and advances nicely
+        com.github.anastaciocintra.escpos.image.RasterBitImageWrapper raster =
+                new com.github.anastaciocintra.escpos.image.RasterBitImageWrapper();
+        raster.setJustification(EscPosConst.Justification.Center);
+
+        EscPosImage escImg = new EscPosImage(new CoffeeImageAndroidImpl(logoBitmap), new BitonalThreshold());
+        escpos.write(raster, escImg);
+        escpos.feed(1); // give it space so text does not collide with the image
     }
 
     private UsbDevice findDevice(int vendorId, int productId) {
@@ -398,55 +602,7 @@ public class FlairPrinterPlugin extends Plugin {
             OutputStream printerOutputStream = new UsbPrinterOutputStream(connection, endpoint);
             EscPos escpos = new EscPos(printerOutputStream);
 
-            /*// 1. Print the logo (if provided)
-            if (logoBase64 != null && !logoBase64.isEmpty()) {
-                Log.d("FPRINT_printToUsbDevice", "print Logo: " + logoBase64);
-                if (logoBase64.startsWith("data:")) {
-                    logoBase64 = logoBase64.substring(logoBase64.indexOf(",") + 1);
-                }
-                byte[] logoBytes = Base64.decode(logoBase64, Base64.DEFAULT);
-                Bitmap logoBitmap = BitmapFactory.decodeByteArray(logoBytes, 0, logoBytes.length);
-
-                // Optionally, resize bitmap to your printer's width!
-                // logoBitmap = resizeBitmap(logoBitmap, 384); // if printer is 384 dots wide
-                BitImageWrapper imageWrapper= new BitImageWrapper();
-                imageWrapper.setJustification(EscPosConst.Justification.Center);
-
-                EscPosImage escPosImage = new EscPosImage(new CoffeeImageAndroidImpl(logoBitmap), new BitonalThreshold());
-                escpos.write(imageWrapper, escPosImage);
-                // Optionally feed line after logo
-                escpos.feed(1);
-            }*/
-
-            if (logoBase64 != null && !logoBase64.isEmpty()) {
-                if (logoBase64.startsWith("data:")) {
-                    logoBase64 = logoBase64.substring(logoBase64.indexOf(',') + 1);
-                }
-                byte[] logoBytes = Base64.decode(logoBase64, Base64.DEFAULT);
-                Bitmap logoBitmap = BitmapFactory.decodeByteArray(logoBytes, 0, logoBytes.length);
-
-                // Choose your printer width in dots
-                // 58mm printers: ~384; 80mm printers: ~576 (sometimes 512/640 depending on model)
-                final int PRINTER_DOTS_WIDTH = 384;
-
-                // Make it visible: scale up, keep aspect ratio
-                Bitmap scaled = logoBitmap; // scaleToWidth(logoBitmap, Math.min(256, PRINTER_DOTS_WIDTH)); // 256-384 looks good
-                //scaled = removeAlphaOnWhite(scaled);
-
-                // Prefer raster mode — aligns and advances nicely
-                com.github.anastaciocintra.escpos.image.RasterBitImageWrapper raster =
-                        new com.github.anastaciocintra.escpos.image.RasterBitImageWrapper();
-                raster.setJustification(EscPosConst.Justification.Center);
-
-                // If you’re using a Bitmap adapter, keep using it; if not, swap to your own implementation.
-                EscPosImage escImg = new EscPosImage(new CoffeeImageAndroidImpl(scaled),
-                        new BitonalThreshold()); // or BitonalOrderedDither()
-
-                escpos.write(raster, escImg);
-                escpos.feed(1);                // <- give it space so text doesn’t collide with the image
-                // Optionally reset justification for upcoming text if you plan to use escpos.write for text:
-                // escpos.write(new Style().setJustification(EscPosConst.Justification.Left), "");
-            }
+            writeLogo(escpos, logoBase64);
 
             // 2. Print the rest of your ESC/POS receipt data
             printerOutputStream.write(data);
@@ -581,7 +737,12 @@ public class FlairPrinterPlugin extends Plugin {
             call.reject("url required");
             return;
         }
-        prefs.edit().putString("server_url", url).apply();
+        // commit() so the URL is on disk before we navigate — the load can restart the
+        // WebView, and an apply() still in flight would be lost.
+        if (!prefs.edit().putString("server_url", url).commit()) {
+            call.reject("Failed to write server URL to storage");
+            return;
+        }
         Log.d("FPRINT_", "setServerUrl: saved to prefs, navigating");
         getBridge().getWebView().post(() -> getBridge().getWebView().loadUrl(url));
         call.resolve();
@@ -601,7 +762,7 @@ public class FlairPrinterPlugin extends Plugin {
 
     @PluginMethod
     public void clearServerUrl(PluginCall call) {
-        prefs.edit().remove("server_url").apply();
+        prefs.edit().remove("server_url").commit();
         // Navigate to the env picker so the user can choose a new environment.
         getBridge().getWebView().post(() ->
                 getBridge().getWebView().loadUrl("file:///android_asset/public/launcher.html"));

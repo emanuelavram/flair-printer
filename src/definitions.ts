@@ -1,6 +1,21 @@
 import type { PluginListenerHandle } from '@capacitor/core';
 
-type PrinterType = 'USB' | 'HTTP';
+/**
+ * How the bridge reaches the printer.
+ *
+ * - `WINDOWS` — a Windows print queue, addressed by name and fed raw ESC/POS through
+ *   the spooler. Desktop only, and the preferred choice for a USB receipt printer on
+ *   Windows: it needs no driver swap.
+ * - `NETWORK` / `TCP` — raw ESC/POS over TCP, default port 9100. Desktop and Android.
+ * - `USB` — direct USB. On Android this is the USB host API; on desktop it is libusb,
+ *   which on Windows only works after the printer has been moved off its print driver
+ *   onto WinUSB (Zadig). Prefer `WINDOWS` there.
+ *
+ * `HTTP` was the old name for `NETWORK` — it was never HTTP. It has been removed, and
+ * the bridges no longer accept it: a printer still stored as `HTTP` is rejected with
+ * "Unsupported printer type" and has to be re-saved as `NETWORK`.
+ */
+export type PrinterType = 'USB' | 'NETWORK' | 'TCP' | 'WINDOWS';
 
 export interface PrinterResult {
   success: boolean;
@@ -11,13 +26,53 @@ export interface Printer {
   id: string;
   name?: string;
   type?: PrinterType;
+  /**
+   * Address of the printer, interpreted per `type`:
+   * - `NETWORK` / `TCP` — `host` or `host:port` (port defaults to 9100)
+   * - `USB` — `vendorIdxproductId`, e.g. `5380x156`
+   * - `WINDOWS` — the print queue name; `queueName` is preferred but this is accepted
+   */
   connectionInfo?: string;
+  /** Windows print queue name, exactly as returned by `listSystemPrinters()`. */
+  queueName?: string;
   lineWidth?: number;
 }
 
 export interface USBPrinter {
   vendorId: string;
   productId: string;
+}
+
+/** An OS print queue, as reported by the host platform. */
+export interface SystemPrinter {
+  /** Queue name to store as `queueName` — this is what the spooler resolves. */
+  name: string;
+  /** Human-readable name for the picker; falls back to `name`. */
+  displayName: string;
+  description?: string;
+  status?: number;
+  isDefault?: boolean;
+}
+
+export interface SystemPrintersResult {
+  /**
+   * False wherever the platform has no print spooler (Android, web).
+   *
+   * Check this rather than testing whether the method exists — Capacitor defines every
+   * declared method on every platform, so `typeof plugin.listSystemPrinters` is always
+   * `'function'` and cannot be used for feature detection.
+   */
+  supported: boolean;
+  printers: SystemPrinter[];
+  error?: string;
+}
+
+export interface ProbeResult {
+  reachable: boolean;
+  /** The `host:port` that was actually dialled. */
+  target?: string;
+  latencyMs?: number;
+  error?: string;
 }
 
 export interface TapAndPayOptions {
@@ -53,9 +108,25 @@ declare module '@capacitor/core' {
 
 export interface FlairPrinterPlugin {
   getPrinters(): Promise<{ printers: Printer[] }>;
+  /**
+   * libusb / USB-host discovery. On Windows this only finds printers that have been
+   * switched to a WinUSB driver — use `listSystemPrinters()` there instead.
+   */
   scanUsbPrinters(): Promise<{ printers: USBPrinter[] }>;
+  /**
+   * The OS print queues available for `type: 'WINDOWS'` printers.
+   * Resolves `{ supported: false, printers: [] }` on platforms without a spooler.
+   */
+  listSystemPrinters(): Promise<SystemPrintersResult>;
+  /**
+   * Check that a network printer answers before its config is saved.
+   * Only `NETWORK` / `TCP` printers can be probed.
+   */
+  probePrinter(options: { type?: PrinterType; connectionInfo?: string }): Promise<ProbeResult>;
   setPrinter({ printer }: { printer: Printer }): Promise<PrinterResult>;
   removePrinter({ printerId }: { printerId: string }): Promise<PrinterResult>;
+  /** Print a short diagnostic receipt to verify a printer config. */
+  testPrint({ printerId }: { printerId: string }): Promise<PrinterResult>;
   printReceipt({
     printerId,
     data,

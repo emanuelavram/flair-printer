@@ -1,5 +1,15 @@
 import { WebPlugin } from '@capacitor/core';
-import type { FlairPrinterPlugin, Printer, USBPrinter, PrinterResult, TapAndPayOptions, TapAndPayResult } from './definitions';
+import type {
+  FlairPrinterPlugin,
+  Printer,
+  PrinterType,
+  USBPrinter,
+  PrinterResult,
+  ProbeResult,
+  SystemPrintersResult,
+  TapAndPayOptions,
+  TapAndPayResult,
+} from './definitions';
 
 export class FlairPrinterWeb extends WebPlugin implements FlairPrinterPlugin {
   async getPrinters(): Promise<{ printers: Printer[] }> {
@@ -8,6 +18,16 @@ export class FlairPrinterWeb extends WebPlugin implements FlairPrinterPlugin {
 
   async scanUsbPrinters(): Promise<{ printers: USBPrinter[] }> {
     throw this.unavailable('scanUsbPrinters is not available on web.');
+  }
+
+  // Resolves rather than throwing: the shared printer dialog calls this to decide
+  // whether to offer the WINDOWS type, and it must not have to catch to find out.
+  async listSystemPrinters(): Promise<SystemPrintersResult> {
+    return { supported: false, printers: [] };
+  }
+
+  async probePrinter(_: { type?: PrinterType; connectionInfo?: string }): Promise<ProbeResult> {
+    return { reachable: false, error: 'probePrinter is not available on web.' };
   }
 
   async setPrinter(_: { printer: Printer }): Promise<PrinterResult> {
