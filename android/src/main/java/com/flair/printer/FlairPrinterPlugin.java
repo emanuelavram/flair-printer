@@ -533,8 +533,18 @@ public class FlairPrinterPlugin extends Plugin {
 
         String base64 = logo.startsWith("data:") ? logo.substring(logo.indexOf(',') + 1) : logo;
         byte[] logoBytes = Base64.decode(base64, Base64.DEFAULT);
-        Bitmap logoBitmap = BitmapFactory.decodeByteArray(logoBytes, 0, logoBytes.length);
+
+        // `inScaled = false` is load-bearing: by default BitmapFactory rescales by the ratio of the
+        // PNG's own density to the display's, so the bitmap handed to the printer is not the size
+        // the caller encoded and the logo prints at an arbitrary scale.
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inScaled = false;
+        Bitmap logoBitmap = BitmapFactory.decodeByteArray(logoBytes, 0, logoBytes.length, options);
         if (logoBitmap == null) return;
+
+        // A transparent pixel is ARGB 0x00000000, whose RGB is black — without flattening onto
+        // white first, the threshold below turns every transparent area into a solid black block.
+        logoBitmap = removeAlphaOnWhite(logoBitmap);
 
         // Raster mode aligns and advances nicely
         com.github.anastaciocintra.escpos.image.RasterBitImageWrapper raster =
